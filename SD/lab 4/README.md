@@ -53,11 +53,14 @@ Datele de pornire din cerință:
 * Capacitatea unui nod de stocare: **400 RPS** de citire publică.
 * Regula impusă: Liderul de scriere (*Write Leader*) este rezervat pentru salvarea datelor acceptate de la furnizor și citirile sensibile la prospețime maximă; **nu este inclus în capacitatea de citire publică obișnuită**.
 * Cererea de citire publică: **720 RPS**.
-* Număr de replici de citire necesare:
-  $$\left\lceil \frac{720\text{ RPS}}{400\text{ RPS}} \right\rceil = 2\text{ replici de citire}$$
-  Capacitate totală oferită de replici: $2 \times 400\text{ RPS} = 800\text{ RPS} \ge 720\text{ RPS}$.
+* Număr de replici de citire în regim normal:
+  $$\left\lceil \frac{720\text{ RPS}}{400\text{ RPS}} \right\rceil = 2\text{ replici de citire} \quad (2 \times 400\text{ RPS} = 800\text{ RPS} \ge 720\text{ RPS})$$
+* **Garantarea disponibilității la căderea unei replici ($N - 1$):**
+  * Dacă avem 2 replici și una cade: $(2 - 1) \times 400\text{ RPS} = 400\text{ RPS} < 720\text{ RPS}$ *(insuficient)*.
+  * Cu **3 replici de citire**, dacă una se oprește neașteptat, cele două rămase oferă:
+    $$(3 - 1) \times 400\text{ RPS} = 2 \times 400\text{ RPS} = 800\text{ RPS} \ge 720\text{ RPS} \quad (\text{suficient})$$
 
-Arhitectura stocării folosește **1 Lider de scriere** și **2 Replici de citire** (*Read Replicas*), actualizate asincron prin fluxul de replici al bazei de date (PostgreSQL WAL).
+Prin urmare, arhitectura stocării folosește **1 Lider de scriere** și **3 Replici de citire** (*Read Replicas*), actualizate asincron prin fluxul de replici al bazei de date (PostgreSQL WAL), asigurând toleranță la defectare $N - 1$ atât la nivel de calcul, cât și la nivel de stocare.
 
 ---
 
@@ -86,9 +89,11 @@ flowchart LR
             leader[("Write Leader")]
             rep1[("Read Replica 1")]
             rep2[("Read Replica 2")]
+            rep3[("Read Replica 3")]
 
             leader -->|"Replicare asincronă"| rep1
             leader -->|"Replicare asincronă"| rep2
+            leader -->|"Replicare asincronă"| rep3
         end
 
         web -->|"Trimite cereri"| lb
@@ -100,6 +105,7 @@ flowchart LR
         cluster -->|"Verifică sau scrie L2"| redis
         cluster -->|"Citiri publice obișnuite"| rep1
         cluster -->|"Citiri publice obișnuite"| rep2
+        cluster -->|"Citiri publice obișnuite"| rep3
         cluster -->|"Scrie date private"| leader
         collector -->|"Scrie date validate de piață"| leader
     end
@@ -113,7 +119,7 @@ flowchart LR
 * **Dashboard Instances (1–4):** Instanțe echivalente, fără stare locală necesară între cereri (*stateless*), care procesează cererile utilizatorilor și dețin propriul cache L1 în memorie.
 * **Market Data Collector:** Serviciu de fundal independent care preia datele de la furnizorul extern și le scrie în nodul lider al bazei de date.
 * **Redis L2:** Serviciu partajat de cache în memorie, accesibil tuturor instanțelor Dashboard.
-* **Market Data Store (Leader + 2 Replicas):** Clusterul de bază de date relațională. Liderul procesează scrierile datelor de piață și ale listelor private și propagă modificările către cele două replici de citire.
+* **Market Data Store (Leader + 3 Replicas):** Clusterul de bază de date relațională. Liderul procesează scrierile datelor de piață și ale listelor private și propagă modificările către cele trei replici de citire.
 
 ---
 
@@ -233,7 +239,7 @@ sequenceDiagram
    * Restul de 5.129 de acțiuni mai puțin active sunt încărcate la cerere (*cache-aside*).
 2. **Comportament la încărcare incompletă sau capacitate de rezervă epuizată:**
    * Dacă Redis repornește gol și procesul de preîncărcare nu s-a finalizat, cererile concurente citesc replicile de stocare.
-   * Dacă volumul de cereri depășește capacitatea sigură a celor două replici (800 RPS), sistemul aplică respingerea controlată a surplusului de cereri (*load shedding*), returnând imediat starea `indisponibil` pentru a proteja baza de date împotriva căderii în cascadă.
+   * Dacă volumul de cereri depășește capacitatea sigură a replicilor de rezervă (1.200 RPS în mod normal, respectiv 800 RPS la oprirea unei replici), sistemul aplică respingerea controlată a surplusului de cereri (*load shedding*), returnând imediat starea `indisponibil` pentru a proteja baza de date împotriva căderii în cascadă.
 
 ---
 

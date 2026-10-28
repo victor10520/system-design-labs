@@ -80,6 +80,7 @@ flowchart LR
         end
 
         redis["Redis L2"]
+        collector["Market Data Collector"]
 
         subgraph db["Market Data Store"]
             leader[("Write Leader")]
@@ -99,18 +100,20 @@ flowchart LR
         cluster -->|"Verifică sau scrie L2"| redis
         cluster -->|"Citiri publice obișnuite"| rep1
         cluster -->|"Citiri publice obișnuite"| rep2
-        cluster -->|"Scrieri date de piață"| leader
+        cluster -->|"Scrie date private"| leader
+        collector -->|"Scrie date validate de piață"| leader
     end
 
     user -->|"Folosește aplicația"| web
-    leader -->|"Preluare date de piață"| provider
+    collector -->|"Preia date de piață"| provider
 ```
 
 ### Semnificația elementelor din Container View:
 * **Load Balancer (L7):** Punctul unic de intrare; termină conexiunile HTTPS și trimite cererile către instanțele pregătite folosind *Least Connections*.
-* **Dashboard Instances (1–4):** Instanțe echivalente, fără stare locală necesară între cereri (*stateless*), care procesează cererile și dețin propriul cache L1 în memorie.
+* **Dashboard Instances (1–4):** Instanțe echivalente, fără stare locală necesară între cereri (*stateless*), care procesează cererile utilizatorilor și dețin propriul cache L1 în memorie.
+* **Market Data Collector:** Serviciu de fundal independent care preia datele de la furnizorul extern și le scrie în nodul lider al bazei de date.
 * **Redis L2:** Serviciu partajat de cache în memorie, accesibil tuturor instanțelor Dashboard.
-* **Market Data Store (Leader + 2 Replicas):** Clusterul de bază de date relațională. Liderul procesează scrierile datelor de piață și propagă modificările către cele două replici de citire.
+* **Market Data Store (Leader + 2 Replicas):** Clusterul de bază de date relațională. Liderul procesează scrierile datelor de piață și ale listelor private și propagă modificările către cele două replici de citire.
 
 ---
 
